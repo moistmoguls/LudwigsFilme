@@ -8,34 +8,6 @@ from rapidfuzz import fuzz
 app = FastAPI()
 
 
-def make_bib_search_url(title):
-    return (
-        "https://katalog.stadtbibliothek-weimar.de/webOPACClient/search.do"
-        "?methodToCall=submit"
-        "&methodToCallParameter=submitSearch"
-        "&searchCategories%5B0%5D=-1"
-        "&searchString%5B0%5D=" + requests.utils.quote(title)
-        + "&submitSearch=Suchen"
-        "&linguistic=false"
-        "&selectedViewBranchlib=0"
-        "&numberOfHits=100"
-    )
-
-
-def suche_einzelnen_film(title):
-    ergebnisse = mein_suchscript_einzelfilm(title)
-    return ergebnisse
-
-
-def mein_suchscript_einzelfilm(title):
-    return mein_suchscript_from_filmliste([
-        {
-            "title": title,
-            "poster_url": None
-        }
-    ])
-
-
 def mein_suchscript(letterboxd_username):
     import re, requests, json
     from bs4 import BeautifulSoup
