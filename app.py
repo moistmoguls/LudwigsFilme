@@ -13,7 +13,7 @@ def mein_suchscript(letterboxd_username):
     from bs4 import BeautifulSoup
     from rapidfuzz import fuzz
 
-    WATCHLIST_URL = "https://letterboxd.com/ludwiglehmann/watchlist/"
+    WATCHLIST_URL = "https://letterboxd.com/" + letterboxd_username + "/watchlist/"
 
     headers = {
         "User-Agent": "Mozilla/5.0"
@@ -70,33 +70,58 @@ def mein_suchscript(letterboxd_username):
         title = re.sub(r"\s+", " ", title)
         return title.strip()
 
+    POSTER_CACHE = {}
+
+    poster_session = requests.Session()
+    poster_session.headers.update({
+        "User-Agent": "Mozilla/5.0"
+    })
+
     def get_real_poster_url(letterboxd_film_url):
 
         if not letterboxd_film_url:
             return None
 
+        if letterboxd_film_url in POSTER_CACHE:
+            return POSTER_CACHE[letterboxd_film_url]
+
         try:
-            r = requests.get(letterboxd_film_url, headers=headers, timeout=10)
+            r = poster_session.get(letterboxd_film_url, timeout=6)
             r.raise_for_status()
 
-            soup = BeautifulSoup(r.text, "html.parser")
+            html = r.text
 
-            script = soup.select_one('script[type="application/ld+json"]')
+            poster_url = None
 
-            if not script:
-                return None
+            # 1. Schneller Weg: direkt im HTML suchen
+            match = re.search(
+                r'"image"\s*:\s*"(https://a\.ltrbxd\.com/resized/film-poster/[^"]+)"',
+                html
+            )
 
-            text = script.text
-            text = text.replace("/* <![CDATA[ */", "")
-            text = text.replace("/* ]]> */", "")
-            text = text.strip()
+            if match:
+                poster_url = match.group(1).replace("\\/", "/")
 
-            data = json.loads(text)
+            # 2. Fallback: JSON-LD sauber auslesen
+            if not poster_url:
+                soup = BeautifulSoup(html, "html.parser")
+                script = soup.select_one('script[type="application/ld+json"]')
 
-            return data.get("image")
+                if script:
+                    text = script.get_text()
+                    text = text.replace("/* <![CDATA[ */", "")
+                    text = text.replace("/* ]]> */", "")
+                    text = text.strip()
+
+                    data = json.loads(text)
+                    poster_url = data.get("image")
+
+            POSTER_CACHE[letterboxd_film_url] = poster_url
+            return poster_url
 
         except Exception as e:
             print("Poster Fehler:", letterboxd_film_url, e)
+            POSTER_CACHE[letterboxd_film_url] = None
             return None
 
     def search(filmliste):
@@ -124,7 +149,7 @@ def mein_suchscript(letterboxd_username):
                 "submitSearch": "Suchen",
                 "linguistic": "false",
                 "selectedViewBranchlib": "0",
-                "selectedSearchBranchlib": "",
+                "selectedSearchBranchlib": "0",
                 "searchRestrictionID[0]": "3",
                 "searchRestrictionValue1[0]": "",
                 "searchRestrictionValue2[0]": "",
@@ -166,6 +191,23 @@ def mein_suchscript(letterboxd_username):
                 if "[Bildtonträger]" not in gefundener_titel_roh:
                     continue
 
+                block_text = treffer_element.parent.get_text("\n", strip=True)
+
+                zeilen = block_text.split("\n")
+
+                kategorie = None
+                status = None
+
+                for zeile in zeilen:
+                    if "Spielfilm" in zeile:
+                        kategorie = zeile.replace("Spielfilm / ", "")
+
+                    if "entliehen" in zeile.lower():
+                        status = "entliehen"
+
+                    if "ausleihbar" in zeile:
+                        status = "ausleihbar"
+
                 gefundener_titel = clean_title(gefundener_titel_roh)
 
                 score = fuzz.token_sort_ratio(
@@ -178,6 +220,8 @@ def mein_suchscript(letterboxd_username):
                     "gefunden": True,
                     "titel": gefundener_titel,
                     "score": score,
+                    "kategorie": kategorie,
+                    "status": status,
                     "url": response.url,
                     "poster_url": None
                 }
@@ -189,14 +233,17 @@ def mein_suchscript(letterboxd_username):
             if bester_treffer and bester_score > 50:
                 bester_treffer["poster_url"] = get_real_poster_url(letterboxd_film_url)
                 fertige_liste.append(bester_treffer)
+                print(bester_treffer)
             else:
                 fertige_liste.append({
                     "gesucht": film,
                     "gefunden": False,
                     "titel": None,
                     "score": 0,
+                    "kategorie": None,
+                    "status": None,
                     "url": None,
-                    "poster_url": None
+                    "poster_url": get_real_poster_url(letterboxd_film_url)
                 })
 
         return fertige_liste
@@ -213,12 +260,11 @@ def startseite():
     <html lang="de">
     <head>
         <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Letterboxd Bibliothek Suche</title>
 
         <style>
-            * {
-                box-sizing: border-box;
-            }
+            * { box-sizing: border-box; }
 
             body {
                 margin: 0;
@@ -228,13 +274,36 @@ def startseite():
                     linear-gradient(180deg, #1f2933 0%, #14181c 62%);
                 color: #9ab;
                 font-family: Arial, Helvetica, sans-serif;
+            }
+
+            .topbar {
+                background: #0f1419;
+                border-bottom: 1px solid #26313b;
+                padding: 18px 0;
+            }
+
+            .wrap {
+                width: min(1200px, calc(100% - 32px));
+                margin: 0 auto;
+            }
+
+            .brand {
+                color: #fff;
+                font-size: 26px;
+                font-weight: 800;
+                letter-spacing: -1px;
+            }
+
+            .center {
+                min-height: calc(100vh - 66px);
                 display: flex;
                 align-items: center;
                 justify-content: center;
+                padding: 32px 0;
             }
 
             .card {
-                width: min(620px, calc(100% - 40px));
+                width: min(620px, 100%);
                 background: #1f2933;
                 border: 1px solid #2c3946;
                 border-radius: 14px;
@@ -244,7 +313,7 @@ def startseite():
 
             h1 {
                 color: #fff;
-                font-size: 38px;
+                font-size: 34px;
                 line-height: 1.1;
                 margin: 0 0 12px;
             }
@@ -277,10 +346,6 @@ def startseite():
                 outline: none;
             }
 
-            input::placeholder {
-                color: #6f7f8d;
-            }
-
             input:focus {
                 border-color: #40bcf4;
                 box-shadow: 0 0 0 3px rgba(64,188,244,0.18);
@@ -301,25 +366,37 @@ def startseite():
                 letter-spacing: 0.04em;
             }
 
-            button:hover {
-                background: #00c030;
+            button:hover { background: #00c030; }
+
+            @media (max-width: 600px) {
+                .brand { font-size: 21px; }
+                .card { padding: 24px; }
+                h1 { font-size: 28px; }
             }
         </style>
     </head>
 
     <body>
-        <main class="card">
-            <h1>Watchlist in der Bibliothek suchen</h1>
-            <p>
-                Gib deinen Letterboxd-Benutzernamen ein. Danach wird deine Watchlist
-                mit dem Katalog der Stadtbibliothek Weimar abgeglichen.
-            </p>
+        <div class="topbar">
+            <div class="wrap">
+                <div class="brand">Letterboxd Bibliothek</div>
+            </div>
+        </div>
 
-            <form action="/suchen" method="get">
-                <label for="username">Letterboxd Benutzername</label>
-                <input type="text" id="username" name="username" placeholder="username" required>
-                <button type="submit">Suchen</button>
-            </form>
+        <main class="center">
+            <section class="card">
+                <h1>Watchlist suchen</h1>
+                <p>
+                    Gib deinen Letterboxd-Benutzernamen ein. Danach wird deine Watchlist
+                    mit dem Katalog der Stadtbibliothek Weimar abgeglichen.
+                </p>
+
+                <form action="/suchen" method="get">
+                    <label for="username">Letterboxd Benutzername</label>
+                    <input type="text" id="username" name="username" placeholder="username" required>
+                    <button type="submit">Watchlist prüfen</button>
+                </form>
+            </section>
         </main>
     </body>
     </html>
@@ -331,6 +408,32 @@ def suchen(username: str):
 
     ergebnisse = mein_suchscript(username)
 
+    html = baue_ergebnis_html(
+        titel=f"Ergebnisse für {username}",
+        untertitel="Watchlist-Abgleich mit dem Katalog der Stadtbibliothek Weimar",
+        ergebnisse=ergebnisse
+    )
+
+    return html
+
+
+def make_bib_search_url(title):
+    return (
+        "https://katalog.stadtbibliothek-weimar.de/webOPACClient/search.do"
+        "?methodToCall=submit"
+        "&methodToCallParameter=submitSearch"
+        "&searchCategories%5B0%5D=-1"
+        "&searchString%5B0%5D=" + requests.utils.quote(title)
+        + "&submitSearch=Suchen"
+        "&linguistic=false"
+        "&selectedViewBranchlib=0"
+        "&selectedSearchBranchlib=0"
+        "&numberOfHits=100"
+    )
+
+
+def baue_ergebnis_html(titel, untertitel, ergebnisse):
+
     gefundene = [e for e in ergebnisse if e.get("gefunden")]
     nicht_gefundene = [e for e in ergebnisse if not e.get("gefunden")]
 
@@ -339,12 +442,11 @@ def suchen(username: str):
     <html lang="de">
     <head>
         <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Ergebnisse</title>
 
         <style>
-            * {{
-                box-sizing: border-box;
-            }}
+            * {{ box-sizing: border-box; }}
 
             body {{
                 margin: 0;
@@ -360,7 +462,7 @@ def suchen(username: str):
             }}
 
             .wrap {{
-                width: min(1200px, calc(100% - 40px));
+                width: min(1200px, calc(100% - 32px));
                 margin: 0 auto;
             }}
 
@@ -372,9 +474,26 @@ def suchen(username: str):
             }}
 
             .headline {{
-                padding: 44px 0 26px;
+                padding: 26px 0 24px;
                 border-bottom: 1px solid #26313b;
             }}
+
+            .topline {{
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 16px;
+                margin-bottom: 18px;
+            }}
+
+            .new-search {{
+                color: #40bcf4;
+                text-decoration: none;
+                font-weight: bold;
+                white-space: nowrap;
+            }}
+
+            .new-search:hover {{ color: #fff; }}
 
             h1 {{
                 color: #fff;
@@ -389,18 +508,24 @@ def suchen(username: str):
             }}
 
             .section-title {{
-                margin: 34px 0 14px;
-                color: #c8d4df;
-                font-size: 15px;
-                text-transform: uppercase;
-                letter-spacing: 0.08em;
+                margin: 34px 0 18px;
+                color: #fff;
+                font-size: 22px;
+                font-weight: 800;
                 border-bottom: 1px solid #2c3946;
-                padding-bottom: 10px;
+                padding-bottom: 12px;
+            }}
+
+            .section-title span {{
+                color: #789;
+                font-size: 15px;
+                font-weight: normal;
+                margin-left: 8px;
             }}
 
             .result-list {{
                 display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+                grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
                 gap: 18px;
                 padding-bottom: 20px;
             }}
@@ -410,7 +535,6 @@ def suchen(username: str):
                 border: 1px solid #2c3946;
                 border-radius: 12px;
                 padding: 14px;
-                min-height: 145px;
                 box-shadow: 0 10px 30px rgba(0,0,0,0.22);
                 transition: transform 0.15s ease, border-color 0.15s ease;
             }}
@@ -431,6 +555,20 @@ def suchen(username: str):
                 display: block;
             }}
 
+            .poster-placeholder {{
+                width: 100%;
+                aspect-ratio: 2 / 3;
+                border-radius: 8px;
+                margin-bottom: 14px;
+                background: linear-gradient(135deg, #202a34, #111820);
+                border: 1px solid #33414f;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #567;
+                font-size: 42px;
+            }}
+
             .original-title {{
                 display: block;
                 color: #fff;
@@ -441,15 +579,13 @@ def suchen(username: str):
                 margin-bottom: 8px;
             }}
 
-            .original-title:hover {{
-                color: #40bcf4;
-            }}
+            .original-title:hover {{ color: #40bcf4; }}
 
             .matched-title {{
                 color: #789;
                 font-size: 14px;
                 line-height: 1.35;
-                margin-bottom: 14px;
+                margin-bottom: 12px;
             }}
 
             .matched-title a {{
@@ -457,56 +593,87 @@ def suchen(username: str):
                 text-decoration: none;
             }}
 
-            .matched-title a:hover {{
-                color: #40bcf4;
+            .matched-title a:hover {{ color: #40bcf4; }}
+
+            .info {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-top: 12px;
             }}
 
-            .badge {{
-                display: inline-block;
+            .info-pill {{
+                border: 1px solid #33414f;
+                background: #141c24;
                 border-radius: 999px;
-                padding: 5px 10px;
-                font-size: 12px;
-                font-weight: bold;
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
-            }}
-
-            .badge-ok {{
-                background: rgba(0, 224, 84, 0.15);
-                color: #00e054;
-            }}
-
-            .badge-no {{
-                background: rgba(255, 128, 0, 0.16);
-                color: #ffb36b;
-            }}
-
-            .score {{
-                margin-top: 10px;
+                padding: 7px 10px;
                 font-size: 13px;
-                color: #789;
+                color: #c8d4df;
+                line-height: 1.2;
+            }}
+
+            .info-pill strong {{
+                color: #678;
+                text-transform: uppercase;
+                font-size: 10px;
+                letter-spacing: 0.06em;
+                margin-right: 5px;
             }}
 
             .missing-section {{
-                margin-top: 28px;
+                margin-top: 34px;
                 padding-top: 10px;
                 border-top: 1px solid #33414f;
             }}
 
-            .missing-card {{
-                opacity: 0.72;
-            }}
+            .missing-card {{ opacity: 0.78; }}
 
-            .back {{
-                display: inline-block;
-                margin: 34px 0 46px;
-                color: #40bcf4;
-                text-decoration: none;
-                font-weight: bold;
-            }}
+            @media (max-width: 600px) {{
+                .wrap {{ width: min(100% - 20px, 1200px); }}
+                .brand {{ font-size: 21px; }}
 
-            .back:hover {{
-                color: #fff;
+                .topline {{
+                    align-items: flex-start;
+                    flex-direction: column;
+                    gap: 10px;
+                }}
+
+                h1 {{
+                    font-size: 26px;
+                    line-height: 1.15;
+                }}
+
+                .result-list {{
+                    grid-template-columns: 1fr;
+                    gap: 12px;
+                }}
+
+                .result-card {{
+                    display: grid;
+                    grid-template-columns: 92px 1fr;
+                    gap: 14px;
+                    padding: 12px;
+                    align-items: start;
+                }}
+
+                .poster,
+                .poster-placeholder {{
+                    margin-bottom: 0;
+                    border-radius: 7px;
+                }}
+
+                .mobile-content {{ min-width: 0; }}
+                .original-title {{ font-size: 17px; }}
+                .matched-title {{ font-size: 13px; }}
+
+                .info {{
+                    gap: 6px;
+                }}
+
+                .info-pill {{
+                    font-size: 12px;
+                    padding: 6px 8px;
+                }}
             }}
         </style>
     </head>
@@ -520,43 +687,56 @@ def suchen(username: str):
 
         <section class="headline">
             <div class="wrap">
-                <h1>Ergebnisse für {username}</h1>
-                <p class="sub">{len(gefundene)} gefunden · {len(nicht_gefundene)} nicht gefunden</p>
+                <div class="topline">
+                    <div>
+                        <h1>{titel}</h1>
+                        <p class="sub">{untertitel} · {len(gefundene)} gefunden · {len(nicht_gefundene)} nicht gefunden</p>
+                    </div>
+
+                    <a class="new-search" href="/">Neue Suche</a>
+                </div>
             </div>
         </section>
 
         <main class="wrap">
-            <h2 class="section-title">Gefunden</h2>
+            <h2 class="section-title">Gefunden <span>{len(gefundene)} Filme</span></h2>
             <div class="result-list">
     """
 
     for eintrag in gefundene:
-        poster_html = ""
+
+        bib_url = make_bib_search_url(eintrag.get("gesucht", ""))
 
         if eintrag.get("poster_url"):
             poster_html = f"""
-                    <a href="{eintrag.get("url")}" target="_blank">
+                    <a href="{bib_url}" target="_blank">
                         <img class="poster" src="{eintrag.get("poster_url")}" alt="{eintrag.get("gesucht", "")}">
                     </a>
             """
+        else:
+            poster_html = '<div class="poster-placeholder">🎬</div>'
 
         html += f"""
                 <article class="result-card">
                     {poster_html}
 
-                    <a class="original-title" href="{eintrag.get("url")}" target="_blank">
-                        {eintrag.get("gesucht", "")}
-                    </a>
-
-                    <div class="matched-title">
-                        Gefundener Titel:
-                        <a href="{eintrag.get("url")}" target="_blank">
-                            {eintrag.get("titel") or ""}
+                    <div class="mobile-content">
+                        <a class="original-title" href="{bib_url}" target="_blank">
+                            {eintrag.get("gesucht", "")}
                         </a>
-                    </div>
 
-                    <span class="badge badge-ok">Gefunden</span>
-                    <div class="score">Trefferqualität: {eintrag.get("score", 0)}</div>
+                        <div class="matched-title">
+                            Gefundener Titel:
+                            <a href="{bib_url}" target="_blank">
+                                {eintrag.get("titel") or ""}
+                            </a>
+                        </div>
+
+                        <div class="info">
+                            <div class="info-pill"><strong>Kategorie</strong>{eintrag.get("kategorie") or "-"}</div>
+                            <div class="info-pill"><strong>Status</strong>{eintrag.get("status") or "-"}</div>
+                        </div>
+                    </div>
                 </article>
         """
 
@@ -564,33 +744,43 @@ def suchen(username: str):
             </div>
 
             <section class="missing-section">
-                <h2 class="section-title">Nicht gefunden</h2>
+    """
+
+    html += f"""
+                <h2 class="section-title">Nicht gefunden <span>{len(nicht_gefundene)} Filme</span></h2>
                 <div class="result-list">
     """
 
     for eintrag in nicht_gefundene:
-        poster_html = ""
+
+        bib_url = make_bib_search_url(eintrag.get("gesucht", ""))
 
         if eintrag.get("poster_url"):
             poster_html = f"""
+                    <a href="{bib_url}" target="_blank">
                         <img class="poster" src="{eintrag.get("poster_url")}" alt="{eintrag.get("gesucht", "")}">
+                    </a>
             """
+        else:
+            poster_html = '<div class="poster-placeholder">🎬</div>'
 
         html += f"""
                     <article class="result-card missing-card">
                         {poster_html}
 
-                        <div class="original-title">{eintrag.get("gesucht", "")}</div>
-                        <div class="matched-title">Kein passender Bildtonträger gefunden</div>
-                        <span class="badge badge-no">Nicht gefunden</span>
+                        <div class="mobile-content">
+                            <a class="original-title" href="{bib_url}" target="_blank">
+                                {eintrag.get("gesucht", "")}
+                            </a>
+
+                            <div class="matched-title">Kein passender Bildtonträger gefunden</div>
+                        </div>
                     </article>
         """
 
     html += """
                 </div>
             </section>
-
-            <a class="back" href="/">← Neue Suche</a>
         </main>
     </body>
     </html>
