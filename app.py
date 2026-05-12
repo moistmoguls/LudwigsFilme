@@ -7,32 +7,6 @@ from rapidfuzz import fuzz
 
 app = FastAPI()
 
-def make_bib_search_url(title):
-    return (
-        "https://katalog.stadtbibliothek-weimar.de/webOPACClient/search.do"
-        "?methodToCall=submit"
-        "&methodToCallParameter=submitSearch"
-        "&searchCategories%5B0%5D=-1"
-        "&searchString%5B0%5D=" + requests.utils.quote(title)
-        + "&submitSearch=Suchen"
-        "&linguistic=false"
-        "&selectedViewBranchlib=0"
-        "&numberOfHits=100"
-    )
-
-
-def suche_einzelnen_film(title):
-    ergebnisse = mein_suchscript_einzelfilm(title)
-    return ergebnisse
-
-
-def mein_suchscript_einzelfilm(title):
-    return mein_suchscript_from_filmliste([
-        {
-            "title": title,
-            "poster_url": None
-        }
-    ])
 
 def mein_suchscript(letterboxd_username):
     import re, requests, json
@@ -215,14 +189,14 @@ def mein_suchscript(letterboxd_username):
             if bester_treffer and bester_score > 50:
                 bester_treffer["poster_url"] = get_real_poster_url(letterboxd_film_url)
                 fertige_liste.append(bester_treffer)
-           else:
+            else:
                 fertige_liste.append({
                     "gesucht": film,
                     "gefunden": False,
                     "titel": None,
                     "score": 0,
                     "url": None,
-                    "poster_url": get_real_poster_url(letterboxd_film_url)
+                    "poster_url": None
                 })
 
         return fertige_liste
@@ -259,14 +233,8 @@ def startseite():
                 justify-content: center;
             }
 
-            .page {
-                width: min(980px, calc(100% - 40px));
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-                gap: 24px;
-            }
-
             .card {
+                width: min(620px, calc(100% - 40px));
                 background: #1f2933;
                 border: 1px solid #2c3946;
                 border-radius: 14px;
@@ -276,7 +244,7 @@ def startseite():
 
             h1 {
                 color: #fff;
-                font-size: 34px;
+                font-size: 38px;
                 line-height: 1.1;
                 margin: 0 0 12px;
             }
@@ -336,83 +304,32 @@ def startseite():
             button:hover {
                 background: #00c030;
             }
-
-            .secondary button {
-                background: #40bcf4;
-                color: #101820;
-            }
-
-            .secondary button:hover {
-                background: #72d3ff;
-            }
         </style>
     </head>
 
     <body>
-        <main class="page">
+        <main class="card">
+            <h1>Watchlist in der Bibliothek suchen</h1>
+            <p>
+                Gib deinen Letterboxd-Benutzernamen ein. Danach wird deine Watchlist
+                mit dem Katalog der Stadtbibliothek Weimar abgeglichen.
+            </p>
 
-            <section class="card">
-                <h1>Watchlist suchen</h1>
-                <p>
-                    Gib deinen Letterboxd-Benutzernamen ein. Danach wird deine Watchlist
-                    mit dem Katalog der Stadtbibliothek Weimar abgeglichen.
-                </p>
-
-                <form action="/suchen" method="get">
-                    <label for="username">Letterboxd Benutzername</label>
-                    <input type="text" id="username" name="username" placeholder="username" required>
-                    <button type="submit">Watchlist prüfen</button>
-                </form>
-            </section>
-
-            <section class="card secondary">
-                <h1>Einzelnen Film suchen</h1>
-                <p>
-                    Suche direkt nach einem einzelnen Filmtitel im Bibliothekskatalog.
-                </p>
-
-                <form action="/filmsuche" method="get">
-                    <label for="title">Filmtitel</label>
-                    <input type="text" id="title" name="title" placeholder="Filmtitel" required>
-                    <button type="submit">Film suchen</button>
-                </form>
-            </section>
-
+            <form action="/suchen" method="get">
+                <label for="username">Letterboxd Benutzername</label>
+                <input type="text" id="username" name="username" placeholder="username" required>
+                <button type="submit">Suchen</button>
+            </form>
         </main>
     </body>
     </html>
     """
 
 
-@app.get("/filmsuche", response_class=HTMLResponse)
-def filmsuche(title: str):
-
-    ergebnisse = suche_einzelnen_film(title)
-
-    html = baue_ergebnis_html(
-        titel=f'Suchergebnis für „{title}”',
-        untertitel="Einzelsuche im Katalog der Stadtbibliothek Weimar",
-        ergebnisse=ergebnisse
-    )
-
-    return html
-
-
 @app.get("/suchen", response_class=HTMLResponse)
 def suchen(username: str):
 
     ergebnisse = mein_suchscript(username)
-
-    html = baue_ergebnis_html(
-        titel=f"Ergebnisse für {username}",
-        untertitel="Watchlist-Abgleich mit dem Katalog der Stadtbibliothek Weimar",
-        ergebnisse=ergebnisse
-    )
-
-    return html
-
-
-def baue_ergebnis_html(titel, untertitel, ergebnisse):
 
     gefundene = [e for e in ergebnisse if e.get("gefunden")]
     nicht_gefundene = [e for e in ergebnisse if not e.get("gefunden")]
@@ -514,21 +431,6 @@ def baue_ergebnis_html(titel, untertitel, ergebnisse):
                 display: block;
             }}
 
-            .poster-placeholder {{
-                width: 100%;
-                aspect-ratio: 2 / 3;
-                border-radius: 8px;
-                margin-bottom: 14px;
-                background:
-                    linear-gradient(135deg, #202a34, #111820);
-                border: 1px solid #33414f;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: #567;
-                font-size: 42px;
-            }}
-
             .original-title {{
                 display: block;
                 color: #fff;
@@ -618,8 +520,8 @@ def baue_ergebnis_html(titel, untertitel, ergebnisse):
 
         <section class="headline">
             <div class="wrap">
-                <h1>{titel}</h1>
-                <p class="sub">{untertitel} · {len(gefundene)} gefunden · {len(nicht_gefundene)} nicht gefunden</p>
+                <h1>Ergebnisse für {username}</h1>
+                <p class="sub">{len(gefundene)} gefunden · {len(nicht_gefundene)} nicht gefunden</p>
             </div>
         </section>
 
@@ -629,31 +531,26 @@ def baue_ergebnis_html(titel, untertitel, ergebnisse):
     """
 
     for eintrag in gefundene:
-
-        bib_url = make_bib_search_url(eintrag.get("gesucht", ""))
+        poster_html = ""
 
         if eintrag.get("poster_url"):
             poster_html = f"""
-                    <a href="{bib_url}" target="_blank">
+                    <a href="{eintrag.get("url")}" target="_blank">
                         <img class="poster" src="{eintrag.get("poster_url")}" alt="{eintrag.get("gesucht", "")}">
                     </a>
-            """
-        else:
-            poster_html = """
-                    <div class="poster-placeholder">🎬</div>
             """
 
         html += f"""
                 <article class="result-card">
                     {poster_html}
 
-                    <a class="original-title" href="{bib_url}" target="_blank">
+                    <a class="original-title" href="{eintrag.get("url")}" target="_blank">
                         {eintrag.get("gesucht", "")}
                     </a>
 
                     <div class="matched-title">
                         Gefundener Titel:
-                        <a href="{bib_url}" target="_blank">
+                        <a href="{eintrag.get("url")}" target="_blank">
                             {eintrag.get("titel") or ""}
                         </a>
                     </div>
@@ -672,28 +569,18 @@ def baue_ergebnis_html(titel, untertitel, ergebnisse):
     """
 
     for eintrag in nicht_gefundene:
-
-        bib_url = make_bib_search_url(eintrag.get("gesucht", ""))
+        poster_html = ""
 
         if eintrag.get("poster_url"):
             poster_html = f"""
-                    <a href="{bib_url}" target="_blank">
                         <img class="poster" src="{eintrag.get("poster_url")}" alt="{eintrag.get("gesucht", "")}">
-                    </a>
-            """
-        else:
-            poster_html = """
-                    <div class="poster-placeholder">🎬</div>
             """
 
         html += f"""
                     <article class="result-card missing-card">
                         {poster_html}
 
-                        <a class="original-title" href="{bib_url}" target="_blank">
-                            {eintrag.get("gesucht", "")}
-                        </a>
-
+                        <div class="original-title">{eintrag.get("gesucht", "")}</div>
                         <div class="matched-title">Kein passender Bildtonträger gefunden</div>
                         <span class="badge badge-no">Nicht gefunden</span>
                     </article>
